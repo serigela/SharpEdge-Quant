@@ -30,6 +30,7 @@ bool Backtester::loadSignalsFromCSV(const std::string& filePath) {
     m_signals.clear();
     m_equity.clear();
     m_drawdowns.clear();
+    m_returns.clear();
     
     // Reset cash and position
     m_cash = m_initialCapital;
@@ -76,6 +77,7 @@ void Backtester::runBacktest() {
     m_equity.clear();
     m_trades.clear();
     m_drawdowns.clear();
+    m_returns.clear();
     
     double lastEquity = m_initialCapital;
     double highWaterMark = m_initialCapital;
