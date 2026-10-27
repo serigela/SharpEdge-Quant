@@ -1,119 +1,40 @@
-# Quant Trading Platform
+# SharpEdge Quant
 
-A hybrid C++/Python quantitative trading platform with a focus on performance and modularity.
+A Python signal pipeline and C++ backtester for exploring simple daily trading strategies. The repository is a research demo, not evidence of profitable trading.
 
-## Overview
+## Evaluation design
 
-This platform consists of the following components:
+Technical indicators are computed from the current and earlier bars. The latest row has no known future return and is excluded from labels. The chronological split reserves the final 20% for evaluation, purges the training row whose label crosses the split, and fits the scaler on training rows only. Signals are generated only from held-out feature rows and executed at the **next bar's open**, with configurable slippage. `SignalGenerator.holdout_metrics` records classification accuracy, sample count, and test start; backtest metrics cover only the held-out execution period.
 
-1. **Python Components**:
-   - Historical data ingestion using yfinance
-   - ML-based signal generation (logistic regression or random forest)
-   - CSV export of signals
+This is a single split on historical data. It is not a walk-forward evaluation, and neither the synthetic unit-test prices nor a favorable backtest establish future performance. The C++ latency parameter assumes a fixed 0.1-second interval between CSV rows, so leave latency at zero for daily bars.
 
-2. **C++ Components**:
-   - High-performance backtesting engine
-   - Trade simulation with adjustable parameters
-   - Performance metrics calculation
+## Setup
 
-3. **Integration**:
-   - Python/C++ integration using pybind11
-
-## Requirements
-
-- Python 3.8+
-- C++ compiler (supporting C++17)
-- CMake 3.10+
-
-## Dependencies
-
-Python:
-- numpy
-- pandas
-- scikit-learn
-- yfinance
-- matplotlib
-- pybind11
-
-C++:
-- pybind11
-
-## Project Structure
-
-```
-.
-├── CMakeLists.txt         # CMake build configuration
-├── README.md              # This file
-├── requirements.txt       # Python dependencies
-├── package.json           # Project scripts
-├── data/                  # Directory for data files
-└── src/
-    ├── cpp/               # C++ source files
-    │   ├── backtester.h
-    │   ├── backtester.cpp
-    │   ├── trade_simulator.h
-    │   ├── trade_simulator.cpp
-    │   ├── performance_metrics.h
-    │   ├── performance_metrics.cpp
-    │   └── binding.cpp    # pybind11 bindings
-    └── python/            # Python source files
-        ├── data_ingestion.py
-        ├── signal_generation.py
-        └── main.py        # Main entry point
-```
-
-## Getting Started
-
-1. Install dependencies:
-   ```
-   npm run install-deps
-   ```
-
-2. Ingest historical data:
-   ```
-   npm run ingest-data -- --ticker AAPL
-   ```
-
-3. Generate trading signals:
-   ```
-   npm run generate-signals
-   ```
-
-4. Run a backtest:
-   ```
-   npm run backtest
-   ```
-
-## Usage Examples
-
-### Data Ingestion
+Use Python 3.10–3.12, a C++17 compiler, and CMake. From the repository root:
 
 ```bash
-python src/python/data_ingestion.py --ticker AAPL --period 2y
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cmake -S . -B build -Dpybind11_DIR="$(python -m pybind11 --cmakedir)"
+cmake --build build
+python src/python/main.py --ticker AAPL --period 2y --model random_forest
 ```
 
-### Signal Generation
+The full workflow downloads market prices via yfinance. You can instead run `python src/python/signal_generation.py --help` against an existing OHLCV CSV. `src/python/main.py` needs the compiled `quant_cpp_engine` module in `build/` for the backtest.
+
+## Checks
 
 ```bash
-python src/python/signal_generation.py --input data/AAPL_20231231.csv --model random_forest
+PYTHONPATH=src/python python -m unittest discover -s tests -p 'test_*.py' -v
+g++ -std=c++17 -O2 -Isrc/cpp tests/backtester_repeat.cpp src/cpp/backtester.cpp -o /tmp/backtester_repeat
+/tmp/backtester_repeat
 ```
 
-### Complete Workflow
+The Python checks cover unknown future labels, train-only scaling, and next-bar held-out execution. The C++ check confirms a repeated backtest on the same object returns the same results. CI runs both on pushes and pull requests.
 
-```bash
-python src/python/main.py --ticker AAPL --period 2y --model random_forest --slippage 0.001
-```
+## Structure
 
-## Custom Parameters
+`src/python/data_ingestion.py` fetches and stores prices; `src/python/signal_generation.py` trains and exports signals; `src/cpp/backtester.cpp` applies trades and calculates returns; `src/cpp/binding.cpp` exposes the engine to Python.
 
-- `--ticker`: Stock ticker symbol (default: AAPL)
-- `--start`/`--end`: Start/end dates in YYYY-MM-DD format
-- `--period`: Data period (default: 1y)
-- `--model`: ML model (random_forest or logistic_regression)
-- `--capital`: Initial capital for backtest (default: 10000.0)
-- `--slippage`: Slippage parameter (default: 0.0005)
-- `--latency`: Latency parameter in seconds (default: 0.0)
-
-## License
-
-MIT
+MIT licensed.
