@@ -93,11 +93,11 @@ class FeatureEngineering:
         # Calculate future returns
         data['Future_Returns'] = data['Close'].pct_change(periods=lookahead).shift(-lookahead)
         
+        # The final lookahead rows have no known outcome and must not be labeled 0.
+        data = data.dropna(subset=['Future_Returns'])
+
         # Create binary target
         data['Target'] = np.where(data['Future_Returns'] > threshold, 1, 0)
-        
-        # Remove rows with NaN target
-        data = data.dropna(subset=['Target'])
         
         return data
 
@@ -166,13 +166,16 @@ class SignalGenerator:
         X = data[feature_cols]
         y = data['Target']
         
-        # Scale features
-        X_scaled = self.scaler.fit_transform(X)
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42, shuffle=False
-        )
+        if len(data) < 30 or not data.index.is_monotonic_increasing:
+            raise ValueError('Need at least 30 chronologically ordered feature rows')
+        split = int(len(data) * 0.8)
+        # Purge the last training label: its future close falls in the test period.
+        train_end = split - 1
+        self.test_start = data.index[split]
+        self.feature_cols = feature_cols
+        X_train = self.scaler.fit_transform(X.iloc[:train_end])
+        X_test = self.scaler.transform(X.iloc[split:])
+        y_train, y_test = y.iloc[:train_end], y.iloc[split:]
         
         return X_train, X_test, y_train, y_test, feature_cols
         
@@ -200,6 +203,8 @@ class SignalGenerator:
         # Evaluate model
         y_pred = self.model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
+        self.holdout_metrics = {'accuracy': float(accuracy), 'samples': int(len(y_test)),
+                                'start': str(self.test_start)}
         logger.info(f"Model accuracy: {accuracy:.4f}")
         logger.info(f"\n{classification_report(y_test, y_pred)}")
         
@@ -221,17 +226,14 @@ class SignalGenerator:
         # Add technical indicators
         data = FeatureEngineering.add_technical_indicators(price_data)
         
-        # Define features
-        feature_cols = [
-            'Returns', 'MA5', 'MA10', 'MA20', 'RSI', 
-            'Upper_Band', 'Lower_Band', 'MACD', 'Signal_Line'
-        ]
-        
-        # Check if all feature columns exist
-        feature_cols = [col for col in feature_cols if col in data.columns]
-        
-        # Extract features
-        X = data[feature_cols]
+        if not hasattr(self, 'test_start'):
+            raise ValueError('Call train() before generating held-out signals')
+        # Only held-out feature rows are scored; execution uses the next bar.
+        eligible = data.index >= self.test_start
+        positions = np.flatnonzero(eligible)[:-1]
+        if not len(positions):
+            raise ValueError('No next-bar held-out prices available')
+        X = data.iloc[positions][self.feature_cols]
         
         # Scale features
         X_scaled = self.scaler.transform(X)
@@ -239,14 +241,11 @@ class SignalGenerator:
         # Generate predictions
         signals = self.model.predict(X_scaled)
         
-        # Add signals to dataframe
-        data['Signal'] = signals
-        
-        # Create output dataframe
+        execution = data.iloc[positions + 1]
         output = pd.DataFrame({
-            'timestamp': data.index,
-            'price': data['Close'],
-            'signal': data['Signal']
+            'timestamp': execution.index,
+            'price': execution['Open'].to_numpy(),
+            'signal': signals
         })
         
         return output
